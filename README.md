@@ -1,0 +1,1 @@
+# zsh-inline-history-search

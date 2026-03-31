@@ -137,8 +137,15 @@ _ihs_search_up() {
   emulate -L zsh
   setopt EXTENDED_GLOB
 
+  local prefix="${BUFFER[1,$CURSOR]}"
+
+  if [[ -z "$prefix" ]] || (( CURSOR == $#BUFFER )); then
+    _ihs_clear
+    zle .up-line-or-history
+    return
+  fi
+
   if (( ! _ihs_active )); then
-    local prefix="${BUFFER[1,$CURSOR]}"
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
     _ihs_active=1
@@ -167,6 +174,14 @@ _ihs_search_up() {
 _ihs_search_down() {
   emulate -L zsh
   setopt EXTENDED_GLOB
+
+  local prefix="${BUFFER[1,$CURSOR]}"
+
+  if [[ -z "$prefix" ]] || (( CURSOR == $#BUFFER )); then
+    _ihs_clear
+    zle .down-line-or-history
+    return
+  fi
 
   (( _ihs_active )) || return
 
@@ -227,17 +242,20 @@ _ihs_backward_char() {
     (( CURSOR-- ))
   fi
 
-  if (( _ihs_active )); then
-    _ihs_find_matches "${BUFFER[1,$CURSOR]}"
-    _ihs_match_index=0
-    if (( ${#_ihs_matches} > 0 )); then
-      _ihs_match_index=1
-      _ihs_suggestion="${_ihs_matches[1]}"
-    else
-      _ihs_suggestion=""
-    fi
-    _ihs_show_suggestion
+  local prefix="${BUFFER[1,$CURSOR]}"
+  _ihs_find_matches "$prefix"
+  _ihs_match_index=0
+  _ihs_active=0
+
+  if [[ -n "$prefix" ]] && (( CURSOR < $#BUFFER )) && (( ${#_ihs_matches} > 0 )); then
+    _ihs_match_index=1
+    _ihs_suggestion="${_ihs_matches[1]}"
+    _ihs_active=1
+  else
+    _ihs_suggestion=""
   fi
+
+  _ihs_show_suggestion
 }
 
 #-----------------------------------------------------------------------------

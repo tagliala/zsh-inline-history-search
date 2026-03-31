@@ -95,8 +95,8 @@ zplug "tagliala/zsh-inline-history-search"
 
 | Key | Action |
 |---|---|
-| **↑ Up arrow** | Cycle backward through history entries matching the current prefix (everything left of cursor). Ghost text appears in dim color after the cursor. |
-| **↓ Down arrow** | Cycle forward (toward more recent matches). Reaching the bottom returns to the original typed text with no suggestion. |
+| **↑ Up arrow** | Cycle backward through history entries matching the current prefix (everything left of cursor) when the cursor is inside the buffer. On an empty prompt or at the end of the buffer, Zsh's normal history navigation is used instead. |
+| **↓ Down arrow** | Cycle forward (toward more recent matches). Reaching the bottom returns to the original typed text with no suggestion. On an empty prompt or at the end of the buffer, Zsh's normal history navigation is used instead. |
 | **→ Right arrow** | Accept **one character** from the ghost text. The prefix grows by one letter and matches are recalculated. |
 | **← Left arrow** | Move cursor back one position. The prefix shrinks and matches are recalculated for the shorter prefix. |
 | **Tab** | Accept the **entire** suggestion (ghost text is appended to the buffer). |
@@ -133,7 +133,7 @@ When you press ↑ or ↓, the plugin reads `BUFFER[1,$CURSOR]` — everything l
 
 Because the prefix is derived from the cursor position rather than the full buffer:
 
-- Pressing **←** shrinks the prefix and immediately widens the set of possible matches.
+- Pressing **←** shrinks the prefix and immediately widens the set of possible matches, showing a fresh suggestion as soon as the cursor moves into the middle of the buffer.
 - Pressing **→** (accept one char) grows the prefix and narrows the matches.
 - Pressing **Tab** appends the entire ghost text and places the cursor at the end.
 

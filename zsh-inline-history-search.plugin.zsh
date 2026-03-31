@@ -40,7 +40,7 @@ _ihs_find_matches() {
   [[ -z "$prefix" ]] && return
 
   # Escape glob characters in the prefix
-  local escaped="${prefix//(#m)[\\*?[\]<>()|^~#{}!]/\\$MATCH}"
+  local escaped="${prefix//(#m)[]\\*?[<>()|^~#!]/\\$MATCH}"
 
   local -A seen
   local key entry

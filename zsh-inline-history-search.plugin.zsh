@@ -21,19 +21,12 @@
 # Internal state
 #-----------------------------------------------------------------------------
 
-typeset -g _ihs_suggestion      # Current full suggestion from history
-typeset -g -a _ihs_matches      # Array of matching history entries
-typeset -g -i _ihs_match_index  # Current index into _ihs_matches (1-based)
-typeset -g -i _ihs_active       # Whether we are in search mode
-typeset -g _ihs_last_prefix     # Last prefix used for search (cache)
-
-#-----------------------------------------------------------------------------
-# Core: compute the current prefix (everything left of cursor)
-#-----------------------------------------------------------------------------
-
-_ihs_current_prefix() {
-  print -n -- "${BUFFER[1,$CURSOR]}"
-}
+typeset -g _ihs_suggestion         # Current full suggestion from history
+typeset -g -a _ihs_matches        # Array of matching history entries
+typeset -g -i _ihs_match_index    # Current index into _ihs_matches (1-based)
+typeset -g -i _ihs_active         # Whether we are in search mode
+typeset -g _ihs_last_prefix       # Last prefix used for search (cache)
+typeset -g _IHS_LAST_HIGHLIGHT    # Last region_highlight entry we added
 
 #-----------------------------------------------------------------------------
 # Core: find matches for the given prefix
@@ -47,10 +40,11 @@ _ihs_find_matches() {
   [[ -z "$prefix" ]] && return
 
   # Escape glob characters in the prefix
-  local escaped="${prefix//(#m)[\\*?[\]<>()|^~#]/\\$MATCH}"
+  local escaped="${prefix//(#m)[\\*?[\]<>()|^~#{}!]/\\$MATCH}"
 
-  local -a seen
+  local -A seen
   local key entry
+  local -i match_limit=200
 
   # Walk history from most recent to oldest
   for key in "${(@k)history}"; do
@@ -62,11 +56,14 @@ _ihs_find_matches() {
     # Skip exact match (no completion to offer)
     [[ "$entry" == "$prefix" ]] && continue
 
-    # Skip duplicates
-    (( ${seen[(Ie)$entry]} )) && continue
-    seen+=("$entry")
+    # Skip duplicates (O(1) with associative array)
+    (( ${+seen[$entry]} )) && continue
+    seen[$entry]=1
 
     _ihs_matches+=("$entry")
+
+    # Cap the number of collected matches
+    (( ${#_ihs_matches} >= match_limit )) && break
   done
 }
 
@@ -75,8 +72,7 @@ _ihs_find_matches() {
 #-----------------------------------------------------------------------------
 
 _ihs_refresh_if_needed() {
-  local prefix
-  prefix="$(_ihs_current_prefix)"
+  local prefix="${BUFFER[1,$CURSOR]}"
   if [[ "$prefix" != "$_ihs_last_prefix" ]]; then
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
@@ -94,12 +90,7 @@ _ihs_refresh_if_needed() {
 #-----------------------------------------------------------------------------
 
 _ihs_show_suggestion() {
-  local prefix
-  prefix="$(_ihs_current_prefix)"
-
-  # Keep buffer as the prefix only; ghost text lives in POSTDISPLAY
-  BUFFER="$prefix"
-  CURSOR=$#BUFFER
+  local prefix="${BUFFER[1,$CURSOR]}"
 
   if [[ -n "$_ihs_suggestion" ]]; then
     POSTDISPLAY="${_ihs_suggestion#$prefix}"
@@ -107,10 +98,14 @@ _ihs_show_suggestion() {
     POSTDISPLAY=""
   fi
 
-  # Re-apply highlight covering the entire POSTDISPLAY region
-  region_highlight=("${(@)region_highlight:#*$INLINE_HISTORY_SEARCH_HIGHLIGHT}")
+  # Remove our previous highlight entry
+  if [[ -n "$_IHS_LAST_HIGHLIGHT" ]]; then
+    region_highlight=("${(@)region_highlight:#$_IHS_LAST_HIGHLIGHT}")
+    _IHS_LAST_HIGHLIGHT=""
+  fi
   if (( $#POSTDISPLAY )); then
-    region_highlight+=("$#BUFFER $(( $#BUFFER + $#POSTDISPLAY )) $INLINE_HISTORY_SEARCH_HIGHLIGHT")
+    _IHS_LAST_HIGHLIGHT="$#BUFFER $(( $#BUFFER + $#POSTDISPLAY )) $INLINE_HISTORY_SEARCH_HIGHLIGHT"
+    region_highlight+=("$_IHS_LAST_HIGHLIGHT")
   fi
 
   zle -R
@@ -122,7 +117,10 @@ _ihs_show_suggestion() {
 
 _ihs_clear() {
   POSTDISPLAY=""
-  region_highlight=("${(@)region_highlight:#*$INLINE_HISTORY_SEARCH_HIGHLIGHT}")
+  if [[ -n "$_IHS_LAST_HIGHLIGHT" ]]; then
+    region_highlight=("${(@)region_highlight:#$_IHS_LAST_HIGHLIGHT}")
+    _IHS_LAST_HIGHLIGHT=""
+  fi
   _ihs_active=0
   _ihs_suggestion=""
   _ihs_matches=()
@@ -140,8 +138,7 @@ _ihs_search_up() {
   setopt EXTENDED_GLOB
 
   if (( ! _ihs_active )); then
-    local prefix
-    prefix="$(_ihs_current_prefix)"
+    local prefix="${BUFFER[1,$CURSOR]}"
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
     _ihs_active=1
@@ -197,14 +194,13 @@ _ihs_accept_char() {
 
   if (( _ihs_active )) && [[ -n "$POSTDISPLAY" ]]; then
     local next_char="${POSTDISPLAY[1]}"
-    local prefix
-    prefix="$(_ihs_current_prefix)"
+    local prefix="${BUFFER[1,$CURSOR]}"
     BUFFER="${prefix}${next_char}"
     CURSOR=$#BUFFER
     POSTDISPLAY=""
 
     # Re-search with the new longer prefix
-    _ihs_find_matches "$(_ihs_current_prefix)"
+    _ihs_find_matches "${BUFFER[1,$CURSOR]}"
     _ihs_match_index=0
     if (( ${#_ihs_matches} > 0 )); then
       _ihs_match_index=1
@@ -232,7 +228,7 @@ _ihs_backward_char() {
   fi
 
   if (( _ihs_active )); then
-    _ihs_find_matches "$(_ihs_current_prefix)"
+    _ihs_find_matches "${BUFFER[1,$CURSOR]}"
     _ihs_match_index=0
     if (( ${#_ihs_matches} > 0 )); then
       _ihs_match_index=1
@@ -266,17 +262,20 @@ _ihs_accept_all() {
 #-----------------------------------------------------------------------------
 
 _ihs_self_insert() {
+  emulate -L zsh
   setopt EXTENDED_GLOB
 
   if (( _ihs_active )); then
     POSTDISPLAY=""
-    region_highlight=("${(@)region_highlight:#*$INLINE_HISTORY_SEARCH_HIGHLIGHT}")
+    if [[ -n "$_IHS_LAST_HIGHLIGHT" ]]; then
+      region_highlight=("${(@)region_highlight:#$_IHS_LAST_HIGHLIGHT}")
+      _IHS_LAST_HIGHLIGHT=""
+    fi
   fi
 
   zle .self-insert
 
-  local prefix
-  prefix="$(_ihs_current_prefix)"
+  local prefix="${BUFFER[1,$CURSOR]}"
   _ihs_find_matches "$prefix"
   _ihs_match_index=0
   _ihs_active=0
@@ -296,11 +295,15 @@ _ihs_self_insert() {
 #-----------------------------------------------------------------------------
 
 _ihs_backward_delete_char() {
+  emulate -L zsh
   setopt EXTENDED_GLOB
 
   if (( _ihs_active )); then
     POSTDISPLAY=""
-    region_highlight=("${(@)region_highlight:#*$INLINE_HISTORY_SEARCH_HIGHLIGHT}")
+    if [[ -n "$_IHS_LAST_HIGHLIGHT" ]]; then
+      region_highlight=("${(@)region_highlight:#$_IHS_LAST_HIGHLIGHT}")
+      _IHS_LAST_HIGHLIGHT=""
+    fi
   fi
 
   zle .backward-delete-char
@@ -309,8 +312,7 @@ _ihs_backward_delete_char() {
   _ihs_suggestion=""
 
   if (( $#BUFFER > 0 )); then
-    local prefix
-    prefix="$(_ihs_current_prefix)"
+    local prefix="${BUFFER[1,$CURSOR]}"
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
     if (( ${#_ihs_matches} > 0 )); then

@@ -141,6 +141,22 @@ Matches are collected by iterating over the `$history` associative array from mo
 
 ---
 
+## Development
+
+Run the syntax check:
+
+```zsh
+zsh -n zsh-inline-history-search.plugin.zsh
+```
+
+Run the tests:
+
+```zsh
+zsh test/test_plugin.zsh
+```
+
+---
+
 ## License
 
 [MIT](LICENSE) © 2026 Taglialatela Stefano

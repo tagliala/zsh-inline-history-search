@@ -95,13 +95,13 @@ zplug "tagliala/zsh-inline-history-search"
 
 | Key | Action |
 |---|---|
-| **↑ Up arrow** | Cycle backward through history entries matching the current prefix (everything left of cursor) when the cursor is inside the buffer. On an empty prompt or at the end of the buffer, Zsh's normal history navigation is used instead. |
-| **↓ Down arrow** | Cycle forward (toward more recent matches). Reaching the bottom returns to the original typed text with no suggestion. On an empty prompt or at the end of the buffer, Zsh's normal history navigation is used instead. |
+| **↑ Up arrow** | Cycle backward through history entries matching the current prefix (everything left of cursor). On an empty prompt, Zsh's normal history navigation is used instead. At the end of a non-empty buffer, pressing **↑** starts inline history search. |
+| **↓ Down arrow** | Cycle forward (toward more recent matches). Reaching the bottom returns to the original typed text with no suggestion. Before inline search is active, **↓** keeps Zsh's normal history behavior. |
 | **→ Right arrow** | Accept **one character** from the ghost text. The prefix grows by one letter and matches are recalculated. |
 | **← Left arrow** | Move cursor back one position. The prefix shrinks and matches are recalculated for the shorter prefix. |
 | **Tab** | Accept the **entire** suggestion (ghost text is appended to the buffer). |
-| **Enter** | Clear ghost text and execute the command as typed in the buffer. |
-| **Any printable character** | Insert character at the cursor position and recalculate the suggestion from the new prefix. |
+| **Enter** | Clear inline-search state and execute the command currently in the buffer. |
+| **Any printable character** | Insert character at the cursor position and recalculate the suggestion from the new prefix. If you are editing a suggestion that was selected with **↑**, typing disables search first and then edits the real buffer. |
 | **Backspace** | Delete the character before the cursor and recalculate the suggestion. |
 
 ---
@@ -129,13 +129,14 @@ The value is passed directly to Zsh's `region_highlight`, so it supports all att
 
 The core idea is that **the cursor position governs the search prefix**.
 
-When you press ↑ or ↓, the plugin reads `BUFFER[1,$CURSOR]` — everything left of the cursor — as the pattern to match against history. The matched portion that extends *beyond* the prefix is displayed as ghost text using Zsh's built-in `POSTDISPLAY` variable and highlighted with `region_highlight`.
+When you press ↑ or ↓, the plugin reads `BUFFER[1,$CURSOR]` — everything left of the cursor — as the pattern to match against history. Regular suggestions are displayed as ghost text using Zsh's built-in `POSTDISPLAY` variable and highlighted with `region_highlight`.
 
 Because the prefix is derived from the cursor position rather than the full buffer:
 
 - Pressing **←** shrinks the prefix and immediately widens the set of possible matches, showing a fresh suggestion as soon as the cursor moves into the middle of the buffer.
 - Pressing **→** (accept one char) grows the prefix and narrows the matches.
 - Pressing **Tab** appends the entire ghost text and places the cursor at the end.
+- Pressing **↑** materializes the selected history entry in the real buffer while keeping the cursor at the original position, so pressing **Enter** executes that full command.
 
 Matches are collected by iterating over the `$history` associative array from most recent to oldest, filtering entries that start with the current prefix, deduplicating, and skipping entries that are exact copies of the prefix (nothing to suggest).
 

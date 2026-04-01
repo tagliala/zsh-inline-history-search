@@ -98,6 +98,14 @@ _ihs_refresh_if_needed() {
   fi
 }
 
+_ihs_cap_cursor() {
+  (( CURSOR > ${#BUFFER} )) && CURSOR=${#BUFFER}
+}
+
+_ihs_is_materialized_selection() {
+  [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" == "$_ihs_suggestion" ]]
+}
+
 #-----------------------------------------------------------------------------
 # Core: render ghost text via POSTDISPLAY and region_highlight
 #-----------------------------------------------------------------------------
@@ -182,7 +190,7 @@ _ihs_search_up() {
 
   _ihs_suggestion="${_ihs_matches[$_ihs_match_index]}"
   BUFFER="$_ihs_suggestion"
-  (( CURSOR > $#BUFFER )) && CURSOR=$#BUFFER
+  _ihs_cap_cursor
   _ihs_show_suggestion
 }
 
@@ -213,7 +221,7 @@ _ihs_search_down() {
     (( _ihs_match_index-- ))
     _ihs_suggestion="${_ihs_matches[$_ihs_match_index]}"
     BUFFER="$_ihs_suggestion"
-    (( CURSOR > $#BUFFER )) && CURSOR=$#BUFFER
+    _ihs_cap_cursor
   else
     # Back to the original typed text, no suggestion
     BUFFER="$_ihs_seed_buffer"
@@ -250,7 +258,7 @@ _ihs_accept_char() {
       _ihs_suggestion=""
     fi
     _ihs_show_suggestion
-  elif (( _ihs_active )) && [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" == "$_ihs_suggestion" ]]; then
+  elif (( _ihs_active )) && _ihs_is_materialized_selection; then
     zle forward-char
     _ihs_refresh_if_needed
     _ihs_show_suggestion
@@ -325,7 +333,7 @@ _ihs_self_insert() {
   emulate -L zsh
   setopt EXTENDED_GLOB
 
-  if (( _ihs_active )) && [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" == "$_ihs_suggestion" ]]; then
+  if (( _ihs_active )) && _ihs_is_materialized_selection; then
     _ihs_clear
     zle .self-insert
     return
@@ -364,7 +372,7 @@ _ihs_backward_delete_char() {
   emulate -L zsh
   setopt EXTENDED_GLOB
 
-  if (( _ihs_active )) && [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" == "$_ihs_suggestion" ]]; then
+  if (( _ihs_active )) && _ihs_is_materialized_selection; then
     _ihs_clear
     zle .backward-delete-char
     return

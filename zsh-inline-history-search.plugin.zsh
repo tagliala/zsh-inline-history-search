@@ -26,6 +26,8 @@ typeset -g -a _ihs_matches        # Array of matching history entries
 typeset -g -i _ihs_match_index    # Current index into _ihs_matches (1-based)
 typeset -g -i _ihs_active         # Whether we are in search mode
 typeset -g _ihs_last_prefix       # Last prefix used for search (cache)
+typeset -g _ihs_seed_buffer       # Buffer contents before search selection
+typeset -g -i _ihs_seed_cursor    # Cursor position before search selection
 typeset -g _IHS_LAST_HIGHLIGHT    # Last region_highlight entry we added
 
 #-----------------------------------------------------------------------------
@@ -73,16 +75,35 @@ _ihs_find_matches() {
 
 _ihs_refresh_if_needed() {
   local prefix="${BUFFER[1,$CURSOR]}"
+  local -i i
   if [[ "$prefix" != "$_ihs_last_prefix" ]]; then
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
+
     if (( ${#_ihs_matches} > 0 )); then
+      for (( i = 1; i <= ${#_ihs_matches}; i++ )); do
+        if [[ "${_ihs_matches[$i]}" == "$BUFFER" ]]; then
+          _ihs_match_index=$i
+          _ihs_suggestion="$BUFFER"
+          return
+        fi
+      done
+
       _ihs_match_index=1
       _ihs_suggestion="${_ihs_matches[1]}"
-    else
-      _ihs_suggestion=""
+      return
     fi
+
+    _ihs_suggestion=""
   fi
+}
+
+_ihs_cap_cursor() {
+  (( CURSOR > ${#BUFFER} )) && CURSOR=${#BUFFER}
+}
+
+_ihs_is_materialized_selection() {
+  [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" == "$_ihs_suggestion" ]]
 }
 
 #-----------------------------------------------------------------------------
@@ -92,7 +113,7 @@ _ihs_refresh_if_needed() {
 _ihs_show_suggestion() {
   local prefix="${BUFFER[1,$CURSOR]}"
 
-  if [[ -n "$_ihs_suggestion" ]]; then
+  if [[ -n "$_ihs_suggestion" ]] && [[ "$BUFFER" != "$_ihs_suggestion" ]]; then
     POSTDISPLAY="${_ihs_suggestion#$prefix}"
   else
     POSTDISPLAY=""
@@ -126,6 +147,8 @@ _ihs_clear() {
   _ihs_matches=()
   _ihs_match_index=0
   _ihs_last_prefix=""
+  _ihs_seed_buffer=""
+  _ihs_seed_cursor=0
   zle -R
 }
 
@@ -139,13 +162,15 @@ _ihs_search_up() {
 
   local prefix="${BUFFER[1,$CURSOR]}"
 
-  if [[ -z "$prefix" ]] || (( CURSOR == $#BUFFER )); then
+  if [[ -z "$prefix" ]]; then
     _ihs_clear
     zle .up-line-or-history
     return
   fi
 
   if (( ! _ihs_active )); then
+    _ihs_seed_buffer="$BUFFER"
+    _ihs_seed_cursor=$CURSOR
     _ihs_find_matches "$prefix"
     _ihs_match_index=0
     _ihs_active=1
@@ -164,6 +189,8 @@ _ihs_search_up() {
   fi
 
   _ihs_suggestion="${_ihs_matches[$_ihs_match_index]}"
+  BUFFER="$_ihs_suggestion"
+  _ihs_cap_cursor
   _ihs_show_suggestion
 }
 
@@ -177,23 +204,30 @@ _ihs_search_down() {
 
   local prefix="${BUFFER[1,$CURSOR]}"
 
-  if [[ -z "$prefix" ]] || (( CURSOR == $#BUFFER )); then
+  if [[ -z "$prefix" ]]; then
     _ihs_clear
     zle .down-line-or-history
     return
   fi
 
-  (( _ihs_active )) || return
+  if (( ! _ihs_active )); then
+    zle .down-line-or-history
+    return
+  fi
 
   _ihs_refresh_if_needed
 
   if (( _ihs_match_index > 1 )); then
     (( _ihs_match_index-- ))
     _ihs_suggestion="${_ihs_matches[$_ihs_match_index]}"
+    BUFFER="$_ihs_suggestion"
+    _ihs_cap_cursor
   else
     # Back to the original typed text, no suggestion
-    _ihs_match_index=0
-    _ihs_suggestion=""
+    BUFFER="$_ihs_seed_buffer"
+    CURSOR=$_ihs_seed_cursor
+    _ihs_clear
+    return
   fi
 
   _ihs_show_suggestion
@@ -224,6 +258,10 @@ _ihs_accept_char() {
       _ihs_suggestion=""
     fi
     _ihs_show_suggestion
+  elif (( _ihs_active )) && _ihs_is_materialized_selection; then
+    zle forward-char
+    _ihs_refresh_if_needed
+    _ihs_show_suggestion
   else
     _ihs_clear
     zle forward-char
@@ -237,6 +275,7 @@ _ihs_accept_char() {
 _ihs_backward_char() {
   emulate -L zsh
   setopt EXTENDED_GLOB
+  local -i i
 
   if (( CURSOR > 0 )); then
     (( CURSOR-- ))
@@ -247,12 +286,23 @@ _ihs_backward_char() {
   _ihs_match_index=0
   _ihs_active=0
 
-  if [[ -n "$prefix" ]] && (( CURSOR < $#BUFFER )) && (( ${#_ihs_matches} > 0 )); then
+  if [[ -n "$prefix" ]] && (( ${#_ihs_matches} > 0 )); then
+    for (( i = 1; i <= ${#_ihs_matches}; i++ )); do
+      if [[ "${_ihs_matches[$i]}" == "$BUFFER" ]]; then
+        _ihs_match_index=$i
+        _ihs_suggestion="$BUFFER"
+        _ihs_active=1
+        break
+      fi
+    done
+  fi
+
+  if (( ! _ihs_active )) && [[ -n "$prefix" ]] && (( CURSOR < $#BUFFER )) && (( ${#_ihs_matches} > 0 )); then
     _ihs_match_index=1
     _ihs_suggestion="${_ihs_matches[1]}"
     _ihs_active=1
   else
-    _ihs_suggestion=""
+    (( _ihs_active )) || _ihs_suggestion=""
   fi
 
   _ihs_show_suggestion
@@ -282,6 +332,12 @@ _ihs_accept_all() {
 _ihs_self_insert() {
   emulate -L zsh
   setopt EXTENDED_GLOB
+
+  if (( _ihs_active )) && _ihs_is_materialized_selection; then
+    _ihs_clear
+    zle .self-insert
+    return
+  fi
 
   if (( _ihs_active )); then
     POSTDISPLAY=""
@@ -315,6 +371,12 @@ _ihs_self_insert() {
 _ihs_backward_delete_char() {
   emulate -L zsh
   setopt EXTENDED_GLOB
+
+  if (( _ihs_active )) && _ihs_is_materialized_selection; then
+    _ihs_clear
+    zle .backward-delete-char
+    return
+  fi
 
   if (( _ihs_active )); then
     POSTDISPLAY=""

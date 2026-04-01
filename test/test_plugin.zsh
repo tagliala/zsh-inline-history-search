@@ -20,6 +20,36 @@ source "$REPO_ROOT/zsh-inline-history-search.plugin.zsh" || {
   exit 1
 }
 
+typeset -ga _zle_calls
+
+zle() {
+  case "$1" in
+    -N|-R)
+      ;;
+    .up-line-or-history|.down-line-or-history|.accept-line|.expand-or-complete)
+      _zle_calls+=("$1")
+      ;;
+    .self-insert)
+      BUFFER="${BUFFER[1,$CURSOR]}${KEYS}${BUFFER[$(( CURSOR + 1 )),-1]}"
+      (( CURSOR += ${#KEYS} ))
+      _zle_calls+=("$1")
+      ;;
+    .backward-delete-char)
+      if (( CURSOR > 0 )); then
+        BUFFER="${BUFFER[1,$(( CURSOR - 1 ))]}${BUFFER[$(( CURSOR + 1 )),-1]}"
+        (( CURSOR-- ))
+      fi
+      _zle_calls+=("$1")
+      ;;
+    forward-char)
+      if (( CURSOR < $#BUFFER )); then
+        (( CURSOR++ ))
+      fi
+      _zle_calls+=("$1")
+      ;;
+  esac
+}
+
 # ── Test helpers ──────────────────────────────────────────────────────────
 
 typeset -i _pass=0 _fail=0
@@ -32,6 +62,16 @@ _nok() {
 }
 
 eq() { [[ "$2" == "$3" ]] && _ok "$1" || _nok "$1" "${(qq)2}" "${(qq)3}"; }
+
+_reset_widget_state() {
+  BUFFER=""
+  CURSOR=0
+  POSTDISPLAY=""
+  region_highlight=()
+  KEYS=""
+  _zle_calls=()
+  _ihs_clear
+}
 
 # ── Set up test history ───────────────────────────────────────────────────
 
@@ -110,6 +150,57 @@ eq "'git' prefix finds 2 entries" "2" "${#_ihs_matches}"
 
 # 11. _ihs_last_prefix is updated to the searched prefix.
 eq "_ihs_last_prefix updated after search" "git" "$_ihs_last_prefix"
+
+# ── Tests: widget behavior ───────────────────────────────────────────────────
+
+# 12. Empty buffer at the start keeps normal Zsh history navigation.
+_reset_widget_state
+_ihs_search_up
+eq "empty buffer uses normal up-line-or-history" ".up-line-or-history" "${_zle_calls[1]}"
+
+# 13. Down at the end of a non-empty buffer still uses normal history when search is inactive.
+_reset_widget_state
+BUFFER="ls de"
+CURSOR=$#BUFFER
+_ihs_search_down
+eq "down at end uses normal down-line-or-history before search starts" ".down-line-or-history" "${_zle_calls[1]}"
+
+# 14. Up at the end of a non-empty buffer starts inline history search and materializes the selection.
+_reset_widget_state
+BUFFER="ls de"
+CURSOR=$#BUFFER
+_ihs_search_up
+eq "up at end starts inline search instead of normal history" "0" "${#_zle_calls}"
+eq "up at end materializes the first matching history entry" "ls dependencies" "$BUFFER"
+eq "materialized suggestion keeps the original cursor position" "5" "$CURSOR"
+eq "materialized suggestion does not use ghost text" "" "$POSTDISPLAY"
+
+# 15. Down after an inline search selection restores the originally typed buffer.
+_ihs_search_down
+eq "down after materialized selection restores original buffer" "ls de" "$BUFFER"
+eq "restored buffer also restores the original cursor" "5" "$CURSOR"
+eq "down after restoring typed buffer clears active search mode" "0" "$_ihs_active"
+
+# 16. Left on a materialized selection keeps the real buffer text without duplicating ghost output.
+_reset_widget_state
+BUFFER="ls de"
+CURSOR=$#BUFFER
+_ihs_search_up
+_ihs_backward_char
+eq "left on materialized selection keeps the completed buffer" "ls dependencies" "$BUFFER"
+eq "left on materialized selection moves the cursor left" "4" "$CURSOR"
+eq "left on materialized selection does not create duplicate ghost text" "" "$POSTDISPLAY"
+
+# 17. Typing while a materialized selection is active disables search and edits the actual buffer.
+_reset_widget_state
+BUFFER="ls de"
+CURSOR=$#BUFFER
+_ihs_search_up
+KEYS="x"
+_ihs_self_insert
+eq "typing after materializing a selection edits the real buffer" "ls dexpendencies" "$BUFFER"
+eq "typing after materializing a selection disables active search" "0" "$_ihs_active"
+eq "typing after materializing a selection clears ghost text" "" "$POSTDISPLAY"
 
 # ── Summary ───────────────────────────────────────────────────────────────
 
